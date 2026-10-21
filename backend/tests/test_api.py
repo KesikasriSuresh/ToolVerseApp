@@ -108,6 +108,9 @@ async def test_chat_between_participants(client, booking_setup):
     # the demo client's canned replies are stored as "system", never as the caller
     s = await client.post(f"/api/chats/{bid}", json={"text": "Sounds good!", "senderId": "system"}, headers=borrower.h)
     assert s.json()["senderId"] == "system" and s.json()["fromMe"] is False
+    # Lender received a chat notification for incoming message
+    lender_notes = (await client.get("/api/notifications", headers=lender.h)).json()
+    assert any(n["type"] == "chat" for n in lender_notes)
 
 
 @pytest.mark.asyncio

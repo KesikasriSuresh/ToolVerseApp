@@ -98,11 +98,7 @@ async def send_otp(body: SendOtpRequest, request: Request):
     if body.email:
         email = body.email.strip().lower()
         user = await users.find_one({"email": email})
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No account found with this email. Please sign up using 'Continue with Google'.",
-            )
+
 
         await hit(f"otp_send:{email}", settings.OTP_MAX_SENDS_PER_HOUR, 3600,
                   "Too many code requests for this email. Try again in an hour.")
@@ -126,11 +122,7 @@ async def send_otp(body: SendOtpRequest, request: Request):
                 {"phone": {"$regex": f"{digits_only[-10:]}$"}}
             ]
         })
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No account found with this phone number. Please sign up using 'Continue with Google'.",
-            )
+
 
         await hit(f"otp_send:{phone}", settings.OTP_MAX_SENDS_PER_HOUR, 3600,
                   "Too many code requests for this number. Try again in an hour.")
@@ -171,13 +163,14 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
             )
 
         user = await users.find_one({"email": email})
+        is_new = False
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Account not found. Please sign up using 'Continue with Google'.",
-            )
+            is_new = True
+            doc = _new_user_doc(uid=str(uuid.uuid4()), email=email)
+            await users.insert_one(doc)
+            user = await users.find_one({"email": email})
 
-        return _auth_response(user, False)
+        return _auth_response(user, is_new)
     else:
         phone = sanitize_phone(body.phone)
         # Our own cap on top of the provider's, counted per phone and per IP.
@@ -197,13 +190,14 @@ async def verify_otp(body: VerifyOtpRequest, request: Request):
                 {"phone": {"$regex": f"{digits_only[-10:]}$"}}
             ]
         })
+        is_new = False
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Account not found. Please sign up using 'Continue with Google'.",
-            )
+            is_new = True
+            doc = _new_user_doc(uid=str(uuid.uuid4()), phone=phone)
+            await users.insert_one(doc)
+            user = await users.find_one({"phone": phone})
 
-        return _auth_response(user, False)
+        return _auth_response(user, is_new)
 
 
 @router.post("/google", response_model=AuthResponse)

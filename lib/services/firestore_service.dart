@@ -252,7 +252,7 @@ class FirestoreService {
     controller = StreamController<List<NotificationModel>>.broadcast(
       onListen: () {
         fetch();
-        timer = Timer.periodic(const Duration(seconds: 6), (_) => fetch());
+        timer = Timer.periodic(const Duration(seconds: 3), (_) => fetch());
       },
       onCancel: () {
         timer?.cancel();

@@ -36,7 +36,9 @@ class GeminiVisionService {
   static const String _defaultApiKey =
       String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
   static const String _geminiEndpoint =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent';
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
+  static const String _geminiEndpointFallback =
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent';
 
   static Future<String?> getSavedApiKey() async {
     try {
@@ -190,18 +192,12 @@ Return strictly valid JSON matching this schema:
         },
       });
 
-      final uri = Uri.parse('$_geminiEndpoint?key=$apiKey');
-      final response = await http
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: requestBody,
-          )
-          .timeout(
-            const Duration(seconds: 25),
-            onTimeout: () => throw Exception(
-                'Gemini API timed out after 25 seconds. Check your internet connection.'),
-          );
+      // Try primary model, then fallback on 503 (model overloaded)
+      http.Response response = await _postWithTimeout(_geminiEndpoint, apiKey, requestBody);
+      if (response.statusCode == 503) {
+        debugPrint('[GeminiVision] Primary model 503 (overloaded), retrying with fallback model...');
+        response = await _postWithTimeout(_geminiEndpointFallback, apiKey, requestBody);
+      }
 
       if (response.statusCode != 200) {
         debugPrint('[GeminiVision] API Error ${response.statusCode}: ${response.body}');
@@ -217,7 +213,7 @@ Return strictly valid JSON matching this schema:
           depositApproved: false,
           isRealAi: false,
           errorMessage:
-              'Gemini API returned status ${response.statusCode}. Check your API key.',
+              'Gemini API returned status ${response.statusCode}. ${response.body.length > 200 ? response.body.substring(0, 200) : response.body}',
         );
       }
 
@@ -269,6 +265,25 @@ Return strictly valid JSON matching this schema:
         errorMessage: 'Connection error: $e',
       );
     }
+  }
+
+  static Future<http.Response> _postWithTimeout(
+    String endpoint,
+    String apiKey,
+    String body,
+  ) async {
+    final uri = Uri.parse('$endpoint?key=$apiKey');
+    return http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: body,
+        )
+        .timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => throw Exception(
+              'Gemini API timed out after 30 seconds. Check your internet connection.'),
+        );
   }
 
   /// Detects MIME type from byte signatures

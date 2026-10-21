@@ -72,11 +72,12 @@ class User:
 @pytest_asyncio.fixture
 async def make_user(client):
     async def _make(name="Test User") -> User:
-        phone = f"+91{next(_phones)}"
-        await client.post("/api/auth/otp/send", json={"phone": phone})
-        r = (await client.post("/api/auth/otp/verify", json={"phone": phone, "otp": "123456"})).json()
+        idx = next(_phones)
+        phone = f"+91{idx}"
+        email = f"user_{idx}@example.com"
+        r = (await client.post("/api/auth/google", json={"email": email, "name": name})).json()
         u = User(r["uid"], r["access_token"], phone)
-        await client.put("/api/users/profile", json={"name": name}, headers=u.h)
+        await client.put("/api/users/profile", json={"name": name, "phone": phone, "latitude": 12.97, "longitude": 77.59, "society": "Test Society"}, headers=u.h)
         return u
     return _make
 

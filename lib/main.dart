@@ -618,6 +618,15 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  void markNotificationRead(String id) {
+    final idx = notifications.indexWhere((n) => n.id == id);
+    if (idx != -1 && !notifications[idx].isRead) {
+      notifications[idx].isRead = true;
+      notifyListeners();
+      firestoreService.markNotificationAsRead(id);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Stream wiring
   // -------------------------------------------------------------------------
@@ -713,6 +722,8 @@ class AppState extends ChangeNotifier {
           _firestoreNotificationIds.contains(notification.id) &&
           !currentIds.contains(notification.id));
 
+      final isInitialLoad = _firestoreNotificationIds.isEmpty;
+
       for (final notification in list) {
         final index = notifications
             .indexWhere((existing) => existing.id == notification.id);
@@ -728,6 +739,21 @@ class AppState extends ChangeNotifier {
           notifications.add(appNotification);
         } else {
           notifications[index] = appNotification;
+        }
+
+        // Pop up the notification banner if it's a new, unread notification arriving after initial load
+        if (!isInitialLoad &&
+            !_firestoreNotificationIds.contains(notification.id) &&
+            !notification.isRead) {
+          activePushBanner = appNotification;
+          HapticFeedback.lightImpact();
+          _pushBannerTimer?.cancel();
+          _pushBannerTimer = Timer(const Duration(seconds: 4), () {
+            if (activePushBanner?.id == appNotification.id) {
+              activePushBanner = null;
+              notifyListeners();
+            }
+          });
         }
       }
 
@@ -2189,7 +2215,14 @@ class NotificationCenterSheet extends StatelessWidget {
                         nm.NotificationType.reminder => Icons.alarm_rounded,
                       };
 
-                      return AnimatedContainer(
+                      return GestureDetector(
+                        onTap: () {
+                          if (!n.isRead) {
+                            HapticFeedback.lightImpact();
+                            state.markNotificationRead(n.id);
+                          }
+                        },
+                        child: AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -2290,7 +2323,8 @@ class NotificationCenterSheet extends StatelessWidget {
                             ],
                           ],
                         ),
-                      );
+                      ),
+                    );
                     },
                   ),
           ),

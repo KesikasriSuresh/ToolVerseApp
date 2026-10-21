@@ -24,13 +24,17 @@ class ApiService {
   String _customBaseUrl = _envBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
 
   // Public backend tunnel URL for web/mobile testing via trycloudflare
-  static const String _webBackendUrl = 'https://santa-antiques-stars-utilize.trycloudflare.com';
+  static const String _webBackendUrl = 'https://lows-award-traveller-flush.trycloudflare.com';
 
   String get baseUrl {
     if (_customBaseUrl.isNotEmpty) return _customBaseUrl;
     if (kIsWeb) {
-      // When served via a tunnel, the frontend host is not the backend host.
-      // Use the dedicated backend tunnel URL.
+      final host = Uri.base.host;
+      // When running Flutter Web locally, route directly to the local backend
+      if (host == 'localhost' || host == '127.0.0.1' || host.isEmpty) {
+        return _defaultLocalBaseUrl;
+      }
+      // When served via a remote tunnel, use the dedicated backend tunnel URL.
       return _webBackendUrl;
     }
     if (defaultTargetPlatform == TargetPlatform.android) {

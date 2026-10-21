@@ -8,7 +8,8 @@ from backend.app.core.config import settings
 
 logger = logging.getLogger("toolverse.gemini")
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
+GEMINI_API_URL_FALLBACK = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent"
 
 
 async def analyze_tool_condition_with_gemini(
@@ -109,6 +110,14 @@ async def analyze_tool_condition_with_gemini(
                 json=payload,
                 headers={"Content-Type": "application/json"},
             )
+            # Retry with fallback model if primary is overloaded (503)
+            if resp.status_code == 503:
+                logger.warning("Primary Gemini model returned 503 (overloaded), retrying with fallback model...")
+                resp = await client.post(
+                    f"{GEMINI_API_URL_FALLBACK}?key={key}",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
 
         if resp.status_code != 200:
             logger.error("Gemini API error %s: %s", resp.status_code, resp.text)
