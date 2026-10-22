@@ -108,6 +108,7 @@ class ApiService {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'ngrok-skip-browser-warning': 'true',
     };
     if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
@@ -583,6 +584,7 @@ class ApiService {
     final uri = Uri.parse('$baseUrl/api/uploads/image?category=$category');
     final request = http.MultipartRequest('POST', uri);
 
+    request.headers['ngrok-skip-browser-warning'] = 'true';
     if (_authToken != null && _authToken!.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer $_authToken';
     }
