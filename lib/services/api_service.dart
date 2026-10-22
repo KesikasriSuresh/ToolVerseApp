@@ -23,8 +23,8 @@ class ApiService {
 
   String _customBaseUrl = _envBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
 
-  // Public backend tunnel URL for web/mobile testing via trycloudflare
-  static const String _webBackendUrl = 'https://lows-award-traveller-flush.trycloudflare.com';
+  // Public backend tunnel URL for web/mobile testing
+  static const String _webBackendUrl = 'https://many-marbled-refute.ngrok-free.dev';
 
   String get baseUrl {
     if (_customBaseUrl.isNotEmpty) return _customBaseUrl;

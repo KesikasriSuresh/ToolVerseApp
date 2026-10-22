@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'api_service.dart';
 
 class GeminiVisionResult {
   final bool success;
@@ -32,51 +33,37 @@ class GeminiVisionResult {
 }
 
 class GeminiVisionService {
+  // Legacy SharedPrefs key — kept so we can clear stale keys on startup.
   static const String _prefKey = 'gemini_api_key_override';
-  static const String _defaultApiKey =
-      String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
-  static const String _geminiEndpoint =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
-  static const String _geminiEndpointFallback =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent';
 
-  static Future<String?> getSavedApiKey() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final key = prefs.getString(_prefKey);
-      if (key != null && key.trim().isNotEmpty) {
-        return key.trim();
-      }
-    } catch (_) {}
-    return _defaultApiKey;
-  }
-
-  static Future<void> saveApiKey(String key) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefKey, key.trim());
-    } catch (_) {}
-  }
-
-  static Future<void> clearApiKey() async {
+  /// Clear any stale client-side Gemini API key stored from previous versions.
+  /// The key is now managed server-side only.
+  static Future<void> clearLegacyKey() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_prefKey);
     } catch (_) {}
   }
 
-  /// Compares the baseline listing image with the newly captured return image.
+  // Legacy key accessors — retained so existing settings dialog still compiles.
+  static Future<String?> getSavedApiKey() async => null;
+  static Future<void> saveApiKey(String key) async {}
+  static Future<void> clearApiKey() async {
+    await clearLegacyKey();
+  }
+
+  /// Compares the baseline listing image with the newly captured return image
+  /// by routing the request through the ToolVerse backend.
+  /// The Gemini API key is stored server-side only (.env) — never on the client.
   static Future<GeminiVisionResult> inspectToolReturn({
     required Uint8List? listingImageBytes,
     required String? listingImageUrl,
     required Uint8List returnImageBytes,
     required String toolName,
     required int depositAmount,
-    String? explicitApiKey,
+    String? explicitApiKey, // ignored — kept for API compatibility
   }) async {
-    final apiKey = explicitApiKey ?? await getSavedApiKey();
-
-    // Prepare listing image bytes — with 10s timeout
+    // Download listing image if not already in memory
     Uint8List? baselineBytes = listingImageBytes;
     if ((baselineBytes == null || baselineBytes.isEmpty) &&
         listingImageUrl != null &&
@@ -93,25 +80,8 @@ class GeminiVisionService {
       }
     }
 
-    // If no API key configured, return clear error — no fake scores
-    if (apiKey == null || apiKey.isEmpty) {
-      return GeminiVisionResult(
-        success: false,
-        isSameItem: false,
-        matchPercentage: 0.0,
-        defectsCount: 0,
-        surfaceIntegrity: 0.0,
-        defectsSummary: 'AI inspection unavailable — Gemini API key not configured.',
-        spokenVerdict:
-            'AI inspection could not run because the Gemini API key is not configured. Please set up your API key in settings.',
-        depositApproved: false,
-        isRealAi: false,
-        errorMessage: 'No Gemini API key. Go to Settings → Configure Gemini API Key.',
-      );
-    }
-
     if (baselineBytes == null || baselineBytes.isEmpty) {
-      return GeminiVisionResult(
+      return const GeminiVisionResult(
         success: false,
         isSameItem: false,
         matchPercentage: 0.0,
@@ -125,118 +95,81 @@ class GeminiVisionService {
         errorMessage: 'Original listing photo could not be fetched. Please retry.',
       );
     }
-    // Call real Google Gemini 3.1 Flash Lite Vision
+
+    final listingMime = _detectMimeType(baselineBytes);
+    final returnMime = _detectMimeType(returnImageBytes);
+    debugPrint(
+        '[GeminiVision] Listing: ${baselineBytes.length} bytes ($listingMime), Return: ${returnImageBytes.length} bytes ($returnMime)');
+
+    // Route through backend — API key lives in server .env
     try {
-      final listingMime = _detectMimeType(baselineBytes);
-      final returnMime = _detectMimeType(returnImageBytes);
-      debugPrint('[GeminiVision] Listing: ${baselineBytes.length} bytes ($listingMime), Return: ${returnImageBytes.length} bytes ($returnMime)');
-
-      final b64Listing = base64Encode(baselineBytes);
-      final b64Return  = base64Encode(returnImageBytes);
-
-      final prompt = '''
-You are the ToolVerse AI Return Condition Inspector for a tool sharing marketplace.
-Analyze and compare the two provided images:
-- Image 1: The original baseline listing photo of the tool ('$toolName') when listed by the owner.
-- Image 2: The returned '$toolName' captured with the camera right now at return.
-
-Perform rigorous visual comparison:
-1. Is Image 2 the same tool/item as Image 1? (true/false)
-CRITICAL RULE: If Image 2 shows a completely different tool, an unrelated object, a human face/body, room, or animal, you MUST set isSameItem to false, matchPercentage MUST be under 15.0, and depositApproved to false.
-2. Carefully inspect the surface, casing, chuck, trigger, power cord/battery, blades, and finish.
-   Check for any new cracks, deep scratches, scorch marks, broken guards, or missing accessories.
-3. Compute an honest condition match percentage (0% to 100%):
-   - 93% to 99%: Same tool in excellent/clean condition with standard gentle handling.
-   - 70% to 92%: Same tool with minor cosmetic dust/scuffs that don't affect function.
-   - 30% to 69%: Severe damage, broken components, or missing parts.
-   - < 15%: Totally different object, wrong item, or ruined tool.
-4. Count the number of new defects/scratches detected (0 if pristine).
-5. Calculate surface integrity percentage (e.g. 98.4%).
-6. Formulate a 1-sentence spoken verdict suitable for text-to-speech that clearly states whether the item matched and whether the security deposit of ₹$depositAmount is authorized.
-
-Return strictly valid JSON matching this schema:
-{
-  "isSameItem": true,
-  "matchPercentage": 96.8,
-  "defectsCount": 0,
-  "surfaceIntegrity": 98.2,
-  "defectsSummary": "No structural damage or new scratches found",
-  "spokenVerdict": "ToolVerse AI condition check complete. The returned $toolName matches 96.8% of the original listing photo. Zero structural defects detected. Security deposit of rupees $depositAmount is authorized for full refund.",
-  "depositApproved": true
-}
-''';
+      final apiService = ApiService();
+      final baseUrl = apiService.baseUrl;
 
       final requestBody = jsonEncode({
-        'contents': [
-          {
-            'parts': [
-              {'text': prompt},
-              {
-                'inline_data': {
-                  'mime_type': listingMime,
-                  'data': b64Listing,
-                }
-              },
-              {
-                'inline_data': {
-                  'mime_type': returnMime,
-                  'data': b64Return,
-                }
-              },
-            ]
-          }
-        ],
-        'generationConfig': {
-          'response_mime_type': 'application/json',
-          'temperature': 0.1,
-        },
+        'listingImageB64': base64Encode(baselineBytes),
+        'returnImageB64': base64Encode(returnImageBytes),
+        'listingMime': listingMime,
+        'returnMime': returnMime,
+        'toolName': toolName,
+        'depositAmount': depositAmount,
       });
 
-      // Try primary model, then fallback on 503 (model overloaded)
-      http.Response response = await _postWithTimeout(_geminiEndpoint, apiKey, requestBody);
-      if (response.statusCode == 503) {
-        debugPrint('[GeminiVision] Primary model 503 (overloaded), retrying with fallback model...');
-        response = await _postWithTimeout(_geminiEndpointFallback, apiKey, requestBody);
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      final token = apiService.authToken;
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
       }
 
+      final uri = Uri.parse('$baseUrl/api/ai/inspect');
+      debugPrint('[GeminiVision] Calling backend: $uri');
+
+      final response = await http
+          .post(uri, headers: headers, body: requestBody)
+          .timeout(
+            const Duration(seconds: 60),
+            onTimeout: () => throw Exception(
+                'Backend AI inspection timed out after 60 seconds.'),
+          );
+
       if (response.statusCode != 200) {
-        debugPrint('[GeminiVision] API Error ${response.statusCode}: ${response.body}');
+        debugPrint('[GeminiVision] Backend error ${response.statusCode}: ${response.body}');
+        // Parse a clean message from the backend error body
+        String cleanError = 'AI inspection failed (${response.statusCode}).';
+        try {
+          final errBody = jsonDecode(response.body) as Map<String, dynamic>;
+          final detail = errBody['detail'] as String? ?? '';
+          if (detail.isNotEmpty) {
+            // Strip the "GEMINI_HTTP_XXX: " prefix if present
+            cleanError = detail.replaceFirst(RegExp(r'^GEMINI_HTTP_\d+:\s*'), '');
+          }
+        } catch (_) {}
         return GeminiVisionResult(
           success: false,
           isSameItem: false,
           matchPercentage: 0.0,
           defectsCount: 0,
           surfaceIntegrity: 0.0,
-          defectsSummary: 'AI inspection failed — Gemini API error ${response.statusCode}.',
+          defectsSummary: 'AI inspection failed — $cleanError',
           spokenVerdict:
-              'AI inspection failed due to a Gemini API error. Please check your API key and try again.',
+              'AI inspection failed due to a server error. Please try again.',
           depositApproved: false,
           isRealAi: false,
-          errorMessage:
-              'Gemini API returned status ${response.statusCode}. ${response.body.length > 200 ? response.body.substring(0, 200) : response.body}',
+          errorMessage: cleanError,
         );
       }
 
-      final jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
-      final candidates = jsonResponse['candidates'] as List?;
-      if (candidates == null || candidates.isEmpty) {
-        throw Exception('No response candidates from Gemini Vision');
-      }
-
-      final content = candidates.first['content'] as Map<String, dynamic>?;
-      final parts = content?['parts'] as List?;
-      final rawText = parts?.first?['text'] as String? ?? '{}';
-
-      final parsed = jsonDecode(rawText) as Map<String, dynamic>;
+      final parsed = jsonDecode(response.body) as Map<String, dynamic>;
 
       final isSame = parsed['isSameItem'] as bool? ?? false;
       final matchPct = (parsed['matchPercentage'] as num?)?.toDouble() ?? 0.0;
       final defects = (parsed['defectsCount'] as num?)?.toInt() ?? 0;
       final surface = (parsed['surfaceIntegrity'] as num?)?.toDouble() ?? 0.0;
-      final summary = parsed['defectsSummary'] as String? ?? 'Inspection data unavailable';
+      final summary =
+          parsed['defectsSummary'] as String? ?? 'Inspection data unavailable';
       final spoken = parsed['spokenVerdict'] as String? ??
           'ToolVerse AI condition check complete. The returned $toolName matches ${matchPct.toStringAsFixed(1)} percent of the original listing photo.';
-      // Enforce deposit logic client-side too
+      // Enforce deposit logic client-side as double-check
       final depositOk = isSame && matchPct >= 75.0;
 
       return GeminiVisionResult(
@@ -251,7 +184,7 @@ Return strictly valid JSON matching this schema:
         isRealAi: true,
       );
     } catch (e) {
-      debugPrint('[GeminiVision] Error during vision check: $e');
+      debugPrint('[GeminiVision] Error during backend inspection call: $e');
       return GeminiVisionResult(
         success: false,
         isSameItem: false,
@@ -267,26 +200,7 @@ Return strictly valid JSON matching this schema:
     }
   }
 
-  static Future<http.Response> _postWithTimeout(
-    String endpoint,
-    String apiKey,
-    String body,
-  ) async {
-    final uri = Uri.parse('$endpoint?key=$apiKey');
-    return http
-        .post(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: body,
-        )
-        .timeout(
-          const Duration(seconds: 30),
-          onTimeout: () => throw Exception(
-              'Gemini API timed out after 30 seconds. Check your internet connection.'),
-        );
-  }
-
-  /// Detects MIME type from byte signatures
+  /// Detects MIME type from byte magic bytes
   static String _detectMimeType(Uint8List bytes) {
     if (bytes.length >= 8 &&
         bytes[0] == 0x89 &&

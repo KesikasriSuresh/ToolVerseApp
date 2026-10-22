@@ -39,6 +39,9 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   checkAndSwitchToSecureOrigin();
   await apiService.init();
+  // Clear any stale client-side Gemini API key from previous versions.
+  // Gemini calls are now routed through the backend — no client key needed.
+  await GeminiVisionService.clearLegacyKey();
   try {
     final app = await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -859,7 +862,7 @@ class AppState extends ChangeNotifier {
     String? formattedAddress,
     String? profilePic,
   }) async {
-    var uid = authService.currentUserId;
+    var uid = authService.currentUserId ?? apiService.currentUserId;
     if (uid == null || uid.isEmpty) {
       uid = await authService.signInAnonymously();
     }
@@ -3133,8 +3136,11 @@ class _EmailEntryScreenState extends State<EmailEntryScreen>
           );
           AppStateScope.of(context).user = appUser;
           AppStateScope.of(context).initStreams(uid);
+          final next = _isProfileComplete(appUser)
+              ? const HomeShell()
+              : const AddressScreen();
           Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const AddressScreen()),
+            MaterialPageRoute(builder: (_) => next),
             (route) => false,
           );
         }
@@ -4039,11 +4045,9 @@ class _OtpScreenState extends State<OtpScreen>
 
 /// Returns true if the user has all required profile fields filled.
 bool _isProfileComplete(AppUser user) {
-  // Phone is optional — Google sign-in users may not have a phone.
-  // Only require name + location to access the home screen.
-  return user.name.trim().length >= 2 &&
-      user.latitude != null &&
-      user.longitude != null;
+  // Only require a name of at least 2 characters.
+  // Location and phone are optional so existing/Google users aren't repeatedly prompted.
+  return user.name.trim().length >= 2;
 }
 
 class AddressScreen extends StatefulWidget {
@@ -4189,16 +4193,14 @@ class _AddressScreenState extends State<AddressScreen>
     }
 
     if (_latitude == null || _longitude == null) {
-      setState(() {
-        _locationError =
-            'Please tap "Choose Location" to pin your neighborhood on the map.';
-      });
-      ValidationFeedback.showWarning(
-        context,
-        'Please choose your neighborhood on the map before continuing.',
-        isError: true,
-      );
-      return;
+      // Default coordinates (Tamil Nadu) if map pin was skipped
+      _latitude = 10.9648;
+      _longitude = 78.0397;
+      if (_formattedAddress.isEmpty) {
+        _formattedAddress = societyCtrl.text.trim().isNotEmpty
+            ? societyCtrl.text.trim()
+            : 'Karur, Tamil Nadu';
+      }
     }
 
     setState(() => _isSubmitting = true);
@@ -8013,7 +8015,10 @@ class _BookingScreenState extends State<BookingScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-              ListTile(
+              Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                child: ListTile(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                   side: const BorderSide(color: AppColors.glassLine),
@@ -8038,8 +8043,12 @@ class _BookingScreenState extends State<BookingScreen> {
                     style: TextStyle(color: AppColors.muted, fontSize: 12)),
                 onTap: () => Navigator.of(ctx).pop('camera'),
               ),
+              ),
               const SizedBox(height: 10),
-              ListTile(
+              Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                child: ListTile(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                   side: const BorderSide(color: AppColors.glassLine),
@@ -8063,6 +8072,7 @@ class _BookingScreenState extends State<BookingScreen> {
                     'Select an existing image file from your system',
                     style: TextStyle(color: AppColors.muted, fontSize: 12)),
                 onTap: () => Navigator.of(ctx).pop('gallery'),
+              ),
               ),
             ],
           ),

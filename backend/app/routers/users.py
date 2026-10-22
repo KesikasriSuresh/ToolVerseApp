@@ -48,10 +48,34 @@ async def update_user_profile(
         if phone_val:
             conflict = await users.find_one({"phone": phone_val, "uid": {"$ne": uid}})
             if conflict:
+                if uid.startswith("anon_"):
+                    # Migrate anonymous updates into existing verified account
+                    fields.pop("phone", None)
+                    fields["updatedAt"] = datetime.now(timezone.utc)
+                    await users.update_one({"uid": conflict["uid"]}, {"$set": fields})
+                    await users.delete_one({"uid": uid})
+                    return UserOut(**serialize_doc(await users.find_one({"uid": conflict["uid"]})))
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "This phone number is already linked to another account.")
             fields["phone"] = phone_val
         else:
             fields.pop("phone", None)
+
+    if "email" in fields:
+        email_val = (fields["email"] or "").strip().lower()
+        if email_val:
+            conflict = await users.find_one({"email": email_val, "uid": {"$ne": uid}})
+            if conflict:
+                if uid.startswith("anon_"):
+                    # Migrate anonymous updates into existing verified account
+                    fields.pop("email", None)
+                    fields["updatedAt"] = datetime.now(timezone.utc)
+                    await users.update_one({"uid": conflict["uid"]}, {"$set": fields})
+                    await users.delete_one({"uid": uid})
+                    return UserOut(**serialize_doc(await users.find_one({"uid": conflict["uid"]})))
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "This email is already linked to another account.")
+            fields["email"] = email_val
+        else:
+            fields.pop("email", None)
 
     fields["updatedAt"] = datetime.now(timezone.utc)
     await users.update_one({"uid": uid}, {"$set": fields})

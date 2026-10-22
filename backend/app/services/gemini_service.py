@@ -18,6 +18,8 @@ async def analyze_tool_condition_with_gemini(
     tool_name: str = "Tool",
     deposit_amount: int = 0,
     api_key: str | None = None,
+    listing_mime: str = "image/jpeg",
+    return_mime: str = "image/jpeg",
 ) -> dict:
     """Sends both the original listing photo and returned tool photo to Gemini 1.5 Flash Vision.
 
@@ -92,8 +94,8 @@ async def analyze_tool_condition_with_gemini(
             {
                 "parts": [
                     {"text": prompt},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": b64_listing}},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": b64_return}},
+                    {"inline_data": {"mime_type": listing_mime, "data": b64_listing}},
+                    {"inline_data": {"mime_type": return_mime, "data": b64_return}},
                 ]
             }
         ],

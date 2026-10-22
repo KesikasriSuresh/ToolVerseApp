@@ -69,9 +69,6 @@ def _auth_response(user: dict, is_new: bool) -> dict:
     is_complete = bool(
         user.get("name")
         and len(str(user.get("name", "")).strip()) >= 2
-        and user.get("phone")
-        and user.get("latitude") is not None
-        and user.get("longitude") is not None
     )
     return {
         "access_token": token,

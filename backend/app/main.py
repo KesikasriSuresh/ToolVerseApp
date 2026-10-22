@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.core.config import settings
 from backend.app.db.mongodb import close_mongo_connection, connect_to_mongo, db_instance
-from backend.app.routers import auth, bookings, chats, items, notifications, uploads, users
+from backend.app.routers import ai, auth, bookings, chats, items, notifications, uploads, users
 from backend.app.services.cloudinary_service import configure_cloudinary
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -45,7 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth, users, items, bookings, chats, notifications, uploads):
+for r in (ai, auth, users, items, bookings, chats, notifications, uploads):
     app.include_router(r.router)
 
 
